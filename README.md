@@ -1,0 +1,2 @@
+# DirectX12_Grimoire
+DirectX12の魔導書の実装を書く用のレポジトリ
