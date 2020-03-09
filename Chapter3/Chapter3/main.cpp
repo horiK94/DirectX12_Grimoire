@@ -1,35 +1,146 @@
 #include <Windows.h>
+#include <tchar.h>
+#include<d3d12.h>
+#include<dxgi1_6.h>
 #ifdef  _DEBUG
 #include <iostream>
 #endif //  _DEBUG
-
 using namespace std;
 
-// @brief: �R���\�[����ʂɃt�H�[�}�b�g�t���������\��
-// @param format �t�H�[�}�b�g (%f, %d�Ȃ�)
-// @param �ϒ�����
-// @remaks ���̊֐��̓f�o�b�O�p.�f�o�b�O���̂ݓ���
+// @brief: コンソール画面にフォーマット付き文字列を表示
+// @param format フォーマット (%f, %dなど)
+// @param 可変長引数
+// @remaks この関数はデバッグ用.デバッグ時のみ動作
 void DebugOutputFormatString(const char* format, ...)
 {
-	// DebugOutputFormatString("%d %f %s\n", 100, 3.14, "piyo");�̂悤�Ɏg����悤�ɂ���
+	// DebugOutputFormatString("%d %f %s\n", 100, 3.14, "piyo");のように使えるようにする
 #ifdef _DEBUG
 	va_list valist;
-	va_start(valist, format);		//�ϒ�����(��Ō��� 100, 3.14, "piyo")��1�̕ϐ�(valist)�ɂ܂Ƃ߂�
+	va_start(valist, format);		//可変長引数(上で言う 100, 3.14, "piyo")を1つの変数(valist)にまとめる
 	printf(format, valist);
 	va_end(valist);
 #endif
 }
 
-#if _DEBUG		//�f�o�b�O���[�h(�ŏ��̕��̓R�}���h���C���o�͂ŏ��\�����邽��)
+const unsigned int window_width = 1280;
+const unsigned int window_height = 720;
+
+//ウィンドウアプリケーションはマウス操作やキーボードなどプレイヤーの発生させたイベントを契機にして、次の処理を行う(イベント駆動型プログラミング)
+//イベント駆動型プログラミングではイベントを処理する関数が用意される(イベントハンドラ)
+//Windowsアプリケーションにおけるイベントハンドラがウィンドウプロシージャ(window procedure)
+//イベントが発生すると、messageとしてアプリケーションに通知
+/*
+hwnd: メッセージを受け取るウィンドウプロシージャを持つウィンドウへのハンドルです。
+message: WM_DESTROYやWM_MOVEといった、メッセージコード
+wParam, lParam には，キーボードのキーコード，マウスカーソルの座標など，メッセージの種類に応じた付加情報が格納される
+(メッセージごとに決まっている)
+
+返却型 LRESULT について0: ウィンドウプロシージャの返り値の意味はメッセージによって異なりますが，
+返り値が特別な意味を持たないメッセージでは 0 を返すのが普通
+*/
+LRESULT WindowProcedure(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+	//ウィンドウが破棄される時に発生
+	if (msg == WM_DESTROY)
+	{
+		//OSに対して、アプリが終了することを伝える
+		PostQuitMessage(0);
+		return 0;
+	}
+	//規定の処理を行う(興味のないメッセージの処理は，既定のウィンドウプロシージャである DefWindowProc に丸投げ)
+	return DefWindowProc(hwnd, msg, wparam, lparam);
+}
+
+#if _DEBUG		//デバッグモード(最初の方はコマンドライン出力で情報表示するため)
 int main()
 {
 #else // _DEBUG
-// Windows�v���O�����̎�v�ȃC���N���[�h�t�@�C����WINDOWS.H
-// Windows �v���O������main()�֐��͖���. �G���g���[�|�C���g��WinMain()
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//��f�o�b�O���[�h
+// Windowsプログラムの主要なインクルードファイルはWINDOWS.H
+// Windowsプログラムにmain()関数は無い. エントリーポイントはWinMain()
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 {
 #endif
 	DebugOutputFormatString("Show windows test");
-	getchar();		//�\�����������������Ȃ��悤�ɂ���
+
+	//WNDCLASSEX 構造体でウインドウクラスのパラメタを指定
+	//RegisterClassEx()で そのウインドウクラスを登録
+	//CreateWindow()で登録したクラスを元にウインドウを作る
+	//ShowWindow()で表示する．というのが一連の流れ
+	WNDCLASSEX w = {};
+
+	//WNDCLASSEXの構造体のサイズ(UINT)
+	w.cbSize = sizeof(WNDCLASSEX);
+	//このウインドウのメッセージを処理するコールバック関数へのポインタ(WNDPROC)
+	w.lpfnWndProc = (WNDPROC)WindowProcedure;
+	//このウインドウクラスにつける名前(適当で良い)(LPCTSTR)
+	//_T("")マクロは、ユニコードとマルチバイトの差異を解消するためのマクロ
+	//例えば _T("ABC")とプログラム中に書いた場合、Unicodeが定義されたシステム内では、L"ABC"と書かれたのと同じ16ビットのワイド文字型になり、
+	//Unicodeが定義されていなければ、ただの"ABC"で書かれたのと同じ、8ビットのANSI文字列になる
+	//C++ではビルド設定によって使用する文字セットをANSIにするかUnicodeにするかを切り替えることができるため、文字列は_T("")で書くほうが良い
+	w.lpszClassName = _T("DX12Sample");
+	//ハンドルの取得[このクラスのためのウインドウプロシージャがあるインスタンスハンドル](引数のhinstanceをそのまま代入しているサイトも有る)
+	w.hInstance = GetModuleHandle(nullptr);
+
+	//ウインドウクラスの登録(こういうの作るからよろしくってOSに予告する)
+	RegisterClassEx(&w);
+
+	//ウィンドウサイズの決定
+	RECT wrc = {
+		0,		//四角形の左上のx座標位置
+		0,		//四角形の左上のy座標位置
+		window_width,		//横幅
+		window_height		//縦幅
+	};
+
+	//ウィンドウのサイズ補正
+	//WS_OVERLAPPEDWINDOW = WS_OVERLAPPED(タイトルバー，境界線つきオーバーラップウインドウ) 
+	// | WS_CAPTION	タイトルバー(WS_DLGFRAME[サイズ変更できない境界線]も一緒についてくる)
+	// | WS_SYSMENU タイトルバーにシステムメニュー(閉じるボタンとアイコン)つける
+	// | WS_THICKFRAME サイズ変更できる境界線
+	// | WS_MINIMIZEBOX システムメニューに最小化ボタン加える
+	// | WS_MAXIMIMZEBOX システムメニューに最大化ボタン加える
+	//3つめの引数はメニューフラグ
+	AdjustWindowRect(&wrc, WS_OVERLAPPEDWINDOW, false);
+
+	//ウィンドウの生成
+	//返り値: 作成されたウィンドウのハンドル. 失敗したらNULL
+	HWND hwnd = CreateWindow(
+		w.lpszClassName,		//RegisterClassEx()で登録したクラスの名前(WNDCLASS.lpszClassName)か，定義済みのクラス
+		_T("DX12テスト"),		//タイトルバーの文字
+		WS_OVERLAPPEDWINDOW,		//ウインドウスタイル. WS_OVERLAPPEDWINDOWに関しては上参考
+		CW_USEDEFAULT,			//ウインドウ左上x座標(画面左上が0)．適当でいい時はCW_USEDEFAULT
+		CW_USEDEFAULT,			//ウインドウ左上y座標(画面左上が0)．適当でいい時はCW_USEDEFAULT
+		wrc.right - wrc.left,		//ウインドウ幅．適当でいい時はCW_USEDEFAULT
+		wrc.bottom - wrc.top,		//ウインドウ高さ．適当でいい時はCW_USEDEFAULT
+		nullptr,		//親ウインドウのハンドル．なければNULL．3つめの引数でDW_CHILDを指定したときは必須．
+		nullptr,		//メニューのハンドル．デフォルト(WNDCLASS.lpszMenuName)を使う場合はNULL．
+		w.hInstance, 	//ウインドウとかを作成するモジュール(呼び出しアプリケーションモジュール)のインスタンスのハンドル
+		nullptr			//追加パラメータ
+	);
+
+	//ウィンドウの表示
+	ShowWindow(hwnd, SW_SHOW);
+
+	//すぐに終了しないようゲームループの作成
+	MSG msg = {};
+
+	while (true)
+	{
+		if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+
+		//アプリケーションを終わらすときはmessageがWM_QUITになる
+		if (msg.message == WM_QUIT)
+		{
+			break;
+		}
+	}
+
+	//このクラスは使わないので登録解除
+	UnregisterClass(w.lpszClassName, w.hInstance);
+
 	return 0;
 }
