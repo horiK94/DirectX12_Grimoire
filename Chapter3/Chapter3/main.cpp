@@ -1,7 +1,17 @@
 #include <Windows.h>
 #include <tchar.h>
-#include<d3d12.h>
-#include<dxgi1_6.h>
+#include<d3d12.h>		//DX12の3D用ライブラリ
+#include<dxgi1_6.h>		//DXGI(Direct3D APIよりもドライバーに近いディスプレイ出力に直接関係する機能を制御するためのAPIセット)
+//DXGIはハードウェアやドライバに近いため、Direct3Dを介して操作してほしいが、
+//ディスプレイの列挙(全ディスプレイの列挙)や画面フリップ(画面を弾いたかどうか)はユーザーがDXGIに直接命令しないとならない
+
+// 必要なlibファイルの追加(timeGetTimeに必要)
+//#pragma commentについて
+//オブジェクトファイルに、リンカでリンクするライブラリの名前を記述するもの。
+//#pragma comment(lib, "path")のコードでいう、pathsというライブラリをリンカでリンクするということ
+#pragma comment(lib, "d3d12.h")
+#pragma comment(lib, "dxgi.lib")
+
 #ifdef  _DEBUG
 #include <iostream>
 #endif //  _DEBUG
@@ -24,6 +34,11 @@ void DebugOutputFormatString(const char* format, ...)
 
 const unsigned int window_width = 1280;
 const unsigned int window_height = 720;
+
+//基本オブジェクトの変数
+ID3D12Device* _dev = nullptr;		//デバイスオブジェクト
+IDXGIFactory* _dgiFactory = nullptr;
+IDXGISwapChain* _swapchain = nullptr;
 
 //ウィンドウアプリケーションはマウス操作やキーボードなどプレイヤーの発生させたイベントを契機にして、次の処理を行う(イベント駆動型プログラミング)
 //イベント駆動型プログラミングではイベントを処理する関数が用意される(イベントハンドラ)
@@ -117,6 +132,35 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		w.hInstance, 	//ウインドウとかを作成するモジュール(呼び出しアプリケーションモジュール)のインスタンスのハンドル
 		nullptr			//追加パラメータ
 	);
+
+	//DX12周りの初期化
+
+	//フィーチャーレベルの列挙(選択されたグラフィックドライバーが対応していないフィーチャーレベルだったら下げていくために)
+	D3D_FEATURE_LEVEL levels[] = {
+		D3D_FEATURE_LEVEL_12_1,
+		D3D_FEATURE_LEVEL_12_0,
+		D3D_FEATURE_LEVEL_11_1,
+		D3D_FEATURE_LEVEL_11_0,
+	};
+
+	//DX3Dのデバイス初期化
+
+	D3D_FEATURE_LEVEL featureLevel;		//対応しているフィーチャーレベルのうち、最も良かったものが代入される
+	for (auto level : levels)
+	{
+		//デバイスオブジェクトの作成関数(成功時はS_OKを返す)
+		if (D3D12CreateDevice(nullptr,		//グラフィックドライバーのアダプターのポインタ(nullptrにすると自動で選択される)
+			//複数のグラフィックドライバーが刺さっている場合は自動で選ばれたアダプターが最適なものとは限らないので注意
+
+			level,			//最低限必要なフィーチャーレベル
+			IID_PPV_ARGS(&_dev))		//受け取りたいオブジェクトの型を識別するID(多分デバイスのオブジェクトの型を識別するID) および デバイスの実体のポインターを指定する必要があるが、
+			//IID_PPV_ARGSマクロにの引数にデバイスオブジェクトを代入すると、 REFIID(受け取りたいオブジェクトの型指定)とデバイスの実体のポインターのアドレスに解釈される(1つの引数で済む)
+			== S_OK)
+		{
+			featureLevel = level;
+			break;
+		}
+	}
 
 	//ウィンドウの表示
 	ShowWindow(hwnd, SW_SHOW);
