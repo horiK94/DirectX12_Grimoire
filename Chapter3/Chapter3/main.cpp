@@ -1,7 +1,8 @@
 #include <Windows.h>
 #include <tchar.h>
-#include<d3d12.h>		//DX12の3D用ライブラリ
-#include<dxgi1_6.h>		//DXGI(Direct3D APIよりもドライバーに近いディスプレイ出力に直接関係する機能を制御するためのAPIセット)
+#include <d3d12.h>		//DX12の3D用ライブラリ
+#include <dxgi1_6.h>		//DXGI(Direct3D APIよりもドライバーに近いディスプレイ出力に直接関係する機能を制御するためのAPIセット)
+#include <vector>
 //DXGIはハードウェアやドライバに近いため、Direct3Dを介して操作してほしいが、
 //ディスプレイの列挙(全ディスプレイの列挙)や画面フリップ(画面を弾いたかどうか)はユーザーがDXGIに直接命令しないとならない
 
@@ -9,7 +10,7 @@
 //#pragma commentについて
 //オブジェクトファイルに、リンカでリンクするライブラリの名前を記述するもの。
 //#pragma comment(lib, "path")のコードでいう、pathsというライブラリをリンカでリンクするということ
-#pragma comment(lib, "d3d12.h")
+#pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 
 #ifdef  _DEBUG
@@ -37,7 +38,11 @@ const unsigned int window_height = 720;
 
 //基本オブジェクトの変数
 ID3D12Device* _dev = nullptr;		//デバイスオブジェクト
-IDXGIFactory* _dgiFactory = nullptr;
+//IDXGIFactory6: 特定のGPU設定に基づいてグラフィックアダプターを列挙する単一のメソッドが有効になるインターフェース
+//このインターフェースは 
+// IDXGIFactory6 :: EnumAdapterByGpuPreference(): 指定されたGPU設定に基づいてグラフィックアダプターを列挙します。
+// という関数を実装する
+IDXGIFactory6* _dxgiFactory = nullptr;
 IDXGISwapChain* _swapchain = nullptr;
 
 //ウィンドウアプリケーションはマウス操作やキーボードなどプレイヤーの発生させたイベントを契機にして、次の処理を行う(イベント駆動型プログラミング)
@@ -70,6 +75,7 @@ LRESULT WindowProcedure(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 int main()
 {
 #else // _DEBUG
+#include<Windows.h>		//これがないと何故か _T("DX12サンプル"), で日本語を使うとエラーになる(上でも定義しているんだけどな....)
 // Windowsプログラムの主要なインクルードファイルはWINDOWS.H
 // Windowsプログラムにmain()関数は無い. エントリーポイントはWinMain()
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
@@ -121,7 +127,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 	//返り値: 作成されたウィンドウのハンドル. 失敗したらNULL
 	HWND hwnd = CreateWindow(
 		w.lpszClassName,		//RegisterClassEx()で登録したクラスの名前(WNDCLASS.lpszClassName)か，定義済みのクラス
-		_T("DX12テスト"),		//タイトルバーの文字
+		_T("DX12サンプル"),		//タイトルバーの文字
 		WS_OVERLAPPEDWINDOW,		//ウインドウスタイル. WS_OVERLAPPEDWINDOWに関しては上参考
 		CW_USEDEFAULT,			//ウインドウ左上x座標(画面左上が0)．適当でいい時はCW_USEDEFAULT
 		CW_USEDEFAULT,			//ウインドウ左上y座標(画面左上が0)．適当でいい時はCW_USEDEFAULT
@@ -143,13 +149,81 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		D3D_FEATURE_LEVEL_11_0,
 	};
 
+	//グラフィックボードが複数刺さっていることを考慮して、アダプターを列挙していく
+
+	//IDXGIFactory6 :: EnumAdapterByGpuPreference(): 指定されたGPU設定に基づいてグラフィックアダプターを列挙します。
+	//上の関数を使用するために、IDXGIFactory6型のハードやドライバーの情報が入る構造体の取得を行う
+	//CreateDXGIFactory2: 他のDXGIオブジェクトの生成に使用できるDXGI 1.3ファクトリを作成します。
+	//CreateDXGIFactory1: 他のDXGIオブジェクトの生成に使用できるDXGI 1.1ファクトリを作成します。
+	//Version的にCreateDXGIFactory2を使ったほうが良さそう. 
+	/*
+	HRESULT CreateDXGIFactory2(
+	  UINT   Flags,
+	  REFIID riid,
+	  void   **ppFactory
+	);
+	Flags: UINT: 0かDXGI_CREATE_FACTORY_DEBUGが入る
+	DXGI_CREATE_FACTORY_DEBUG .. DirectX12ではCreateDXGIFactory2()を使うとき、DXGI_CREATE_FACTORY_DEBUGフラグを使用しないとならない(らしい)
+	riid, ppFactory: 戻り値はIID_PPV_ARGSを使用
+	返り値に使用しているドライバーやハードの情報の入った変数_dxgiFactoryが返ってくる
+	*/
+	if (FAILED(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&_dxgiFactory))))
+	{
+		//DXGI_CREATE_FACTORY_DEBUGフラグでだめだったときよう.ただ、DirectX12でフラグを0にするのは推奨されていない気がする
+		if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&_dxgiFactory))))
+		{
+			return -1;
+		}
+	}
+
+	//グラフィックボードの使用できるアダプターを列挙していく
+	vector<IDXGIAdapter*> adapters;
+
+	//検索できたアダプターが入ってくる
+	IDXGIAdapter* tmpAdapter = nullptr;
+	//EnumAdapters(): Enumerates the adapters (video cards).ビデオカードアダプタを列挙したものを返す関数
+	//成功時はS_OK. ローカルシステムに刺さっているアダプターより多い数のindexが来たらDXGI_ERROR_NOT_FOUND, 第2引数がnullptrならDXGI_ERROR_INVALID_CALL を返す(いずれもHRESULT型)
+	for (int i = 0; _dxgiFactory->EnumAdapters(i, &tmpAdapter) != DXGI_ERROR_NOT_FOUND; ++i)
+	{
+		adapters.push_back(tmpAdapter);
+	}
+
+	for (auto adapter : adapters)
+	{
+		//アダプターの名前を元に使用するアダプターを決めていく
+
+		//DXGI1.0までのアダプターかビデオカードの説明用構造体
+		//Describes an adapter (or video card) by using DXGI 1.0.
+		DXGI_ADAPTER_DESC  adesc = {};		//初期化
+		adapter->GetDesc(&adesc);		//アダプターから説明情報を取得
+
+		//DXGI_ADAPTER_DESCのDescriptionについて
+		//グラフィックハードウェアのLvが8以下: アダプタの説明を含む文字列
+		//グラフィックハードウェアのLvが9以上: GetDesc()は説明文字列に対して「ソフトウェアアダプター」を返す
+		//wstringはwchar_t型文字列. wchar_tは16ビットの環境で、UTF-16の文字列として使用	
+		std::wstring strDesc = adesc.Description;
+
+		//探したいアダプターの名前で確認
+		/*
+		ワイド文字列リテラル(1文字あたりのバイト数を通常より多くしたデータ型)の時は、
+		文字列リテラルに対して L をつける必要がある
+		*/
+		//std::string::npos: string::findで値が見つからなかった場合に返す値として定義されている
+		if (strDesc.find(L"NVIDIA") != std::string::npos)		//ソフトウェアアダプター名に指定した文字列があるなら
+		{
+			//見つけられたので代入
+			tmpAdapter = adapter;
+			break;
+		}
+	}
+
 	//DX3Dのデバイス初期化
 
 	D3D_FEATURE_LEVEL featureLevel;		//対応しているフィーチャーレベルのうち、最も良かったものが代入される
 	for (auto level : levels)
 	{
 		//デバイスオブジェクトの作成関数(成功時はS_OKを返す)
-		if (D3D12CreateDevice(nullptr,		//グラフィックドライバーのアダプターのポインタ(nullptrにすると自動で選択される)
+		if (D3D12CreateDevice(tmpAdapter,		//グラフィックドライバーのアダプターのポインタ(nullptrにすると自動で選択される)
 			//複数のグラフィックドライバーが刺さっている場合は自動で選ばれたアダプターが最適なものとは限らないので注意
 
 			level,			//最低限必要なフィーチャーレベル
