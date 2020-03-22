@@ -36,8 +36,16 @@ void DebugOutputFormatString(const char* format, ...)
 const unsigned int window_width = 1280;
 const unsigned int window_height = 720;
 
+//コマンドリストの参照(GPUに対する命令をまとめるためのオブジェクト)
+ID3D12CommandList* _commandList = nullptr;
+//コマンドアロケーターの参照(コマンドリストを使用するのに必要)
+//コマンドリストに格納する命令の為のメモリを管理するオブジェクト
+ID3D12CommandAllocator* _commandAllocator = nullptr;
+//コマンドキューの参照
+ID3D12CommandQueue* _commandQueue = nullptr;
+
 //基本オブジェクトの変数
-ID3D12Device* _dev = nullptr;		//デバイスオブジェクト
+ID3D12Device* _dev = nullptr;		//デバイスオブジェクト(デバイスに関する参照)
 //IDXGIFactory6: 特定のGPU設定に基づいてグラフィックアダプターを列挙する単一のメソッドが有効になるインターフェース
 //このインターフェースは 
 // IDXGIFactory6 :: EnumAdapterByGpuPreference(): 指定されたGPU設定に基づいてグラフィックアダプターを列挙します。
@@ -229,12 +237,64 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 			level,			//最低限必要なフィーチャーレベル
 			IID_PPV_ARGS(&_dev))		//受け取りたいオブジェクトの型を識別するID(多分デバイスのオブジェクトの型を識別するID) および デバイスの実体のポインターを指定する必要があるが、
 			//IID_PPV_ARGSマクロにの引数にデバイスオブジェクトを代入すると、 REFIID(受け取りたいオブジェクトの型指定)とデバイスの実体のポインターのアドレスに解釈される(1つの引数で済む)
+			//多分だが、Dx12では受け取り系はIID_PPV_ARGSを使うのかも(使わなくてもいいけど、面倒)
 			== S_OK)
 		{
 			featureLevel = level;
 			break;
 		}
 	}
+
+	//作成結果とかを代入する変数
+	HRESULT result;
+	//コマンドアロケーターの作成
+	/*
+	CreateCommandAllocator関数
+	D3D12_COMMAND_LIST_TYPE_DIRECT: GPUが実行できるコマンドバッファーを指定
+
+	第1引数：コマンドアロケータの種類
+	第2引数：各インタフェース固有のGUID
+	第3引数：ID3D12CommandAllocatorインタフェースのポインタを格納する変数のアドレス
+
+	第2、第3引数は、IID_PPV_ARGSマクロを使うことで簡易的に受け渡しが可能。
+	*/
+	result = _dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&_commandAllocator));
+
+	//コマンドリストの作成
+	result = _dev->CreateCommandList(0, //	シングルGPUオペレーションの場合、これをゼロに設定
+		D3D12_COMMAND_LIST_TYPE_DIRECT, //作成するコマンドリストのタイプ
+		_commandAllocator,		//デバイスがコマンドリストを作成するコマンドアロケーターオブジェクトへのポインター
+		nullptr,	// パイプライン状態オブジェクトへのオプションポインター
+		IID_PPV_ARGS(&_commandList)		//作成されたコマンドリストが返される変数
+	);
+
+	//コマンドキューの実体の作成
+
+	//コマンドキューの設定
+	//D3D12_COMMAND_QUEUE_DESC構造
+	D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
+
+	//タイムアウトなし
+	//(デフォルトのコマンドキュー)
+	commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+
+	//アダプターを1つしか使わないので0
+	/*
+	シングルGPU操作の場合、これをゼロに設定.
+	複数のGPUノードがある場合は、ビットを設定して、コマンドキューが適用されるノード（デバイスの物理アダプター）を識別
+	*/
+	commandQueueDesc.NodeMask = 0;
+
+	//プライオリティは指定なし
+	//コマンドキューの 優先度
+	commandQueueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+
+	//種類はコマンドリストと同様にする
+	commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+	//キュー作成
+	result = _dev->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&_commandQueue));
+
 
 	//ウィンドウの表示
 	ShowWindow(hwnd, SW_SHOW);
