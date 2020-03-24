@@ -147,7 +147,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		nullptr			//追加パラメータ
 	);
 
-	//DX12周りの初期化
+	/////////////////////////////
+	// DX12周りの初期化
+	/////////////////////////////
 
 	//フィーチャーレベルの列挙(選択されたグラフィックドライバーが対応していないフィーチャーレベルだったら下げていくために)
 	D3D_FEATURE_LEVEL levels[] = {
@@ -225,8 +227,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		}
 	}
 
-	//DX3Dのデバイス初期化
-
+	/////////////////////////////
+	// DX3Dのデバイス初期化
+	/////////////////////////////
 	D3D_FEATURE_LEVEL featureLevel;		//対応しているフィーチャーレベルのうち、最も良かったものが代入される
 	for (auto level : levels)
 	{
@@ -247,7 +250,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 
 	//作成結果とかを代入する変数
 	HRESULT result;
-	//コマンドアロケーターの作成
+
+	/////////////////////////////
+	// コマンドアロケーターの作成
+	/////////////////////////////
 	/*
 	CreateCommandAllocator関数
 	D3D12_COMMAND_LIST_TYPE_DIRECT: GPUが実行できるコマンドバッファーを指定
@@ -268,7 +274,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		IID_PPV_ARGS(&_commandList)		//作成されたコマンドリストが返される変数
 	);
 
-	//コマンドキューの実体の作成
+	/////////////////////////////
+	// コマンドキューの実体の作成
+	/////////////////////////////
 
 	//コマンドキューの設定
 	//D3D12_COMMAND_QUEUE_DESC構造
@@ -295,6 +303,79 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 	//キュー作成
 	result = _dev->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&_commandQueue));
 
+	/////////////////////////////
+	// スワップチェーンの作成
+	/////////////////////////////
+
+	/*
+	typedef struct DXGI_SWAP_CHAIN_DESC1 {
+	  UINT             Width;		//画面幅
+	  UINT             Height;		//画面高さ
+	  DXGI_FORMAT      Format;		//ピクセルフォーマット
+	  BOOL             Stereo;		//立体視を使用するか有無を指定
+	  DXGI_SAMPLE_DESC SampleDesc;	//サンプリング回数や品質の設定
+		typedef struct DXGI_SAMPLE_DESC {
+		  UINT Count;		//サンプリング回数. アンチエイリアスを使用しない場合は1指定
+		  UINT Quality;		//サンプリング品質. アンチエイリアスを使用しない場合は0指定
+		} DXGI_SAMPLE_DESC;
+	  DXGI_USAGE       BufferUsage;		//フレームバッファの使用方法
+	   -> DXGI_USAGE_BACK_BUFFER: サーフェスまたはリソースはバックバッファーとして使用
+	  UINT             BufferCount;		//バッファの数. ダブルバッファなら2
+	  DXGI_SCALING     Scaling;		//フレームバッファとウィンドウのサイズが異るときにどう表示するか
+		typedef enum DXGI_SCALING {
+		  DXGI_SCALING_STRETCH,		//ウィンドウのサイズに引き伸ばし
+		  DXGI_SCALING_NONE,		//引き伸ばしをしない
+		  DXGI_SCALING_ASPECT_RATIO_STRETCH		//縦横比の比率を維持して引き伸ばす
+		} ;
+	  DXGI_SWAP_EFFECT SwapEffect;		//ディスプレイにフレーム表示後の表画面のピクセルをどうするか
+		typedef enum DXGI_SWAP_EFFECT {
+		  DXGI_SWAP_EFFECT_DISCARD,				//DXGIがバックバッファーの内容を破棄(複数のバックバッファーを持つスワップチェーンに対して有効)
+		  DXGI_SWAP_EFFECT_SEQUENTIAL,			//DXGIがバックバッファーのコンテンツを保持
+		  DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,		//DXGIがバックバッファーのコンテンツを保持するように指定(WPF: ウィンドウズデスクトップアニメーションで使用する?)
+		  DXGI_SWAP_EFFECT_FLIP_DISCARD			//DXGIがバックバッファーの内容を破棄(WPF: ウィンドウズデスクトップアニメーションで使用する?)
+		} ;
+	  DXGI_ALPHA_MODE  AlphaMode;		//フレームバッファをウィンドウに表示する際の「アルファ値の扱い方」
+	  typedef enum DXGI_ALPHA_MODE {
+		  DXGI_ALPHA_MODE_UNSPECIFIED,		//動作指定なし(GPUに任せる)
+		  DXGI_ALPHA_MODE_PREMULTIPLIED,	//アルファ値はあらかじめ乗算されているものである
+		  DXGI_ALPHA_MODE_STRAIGHT,			//アルファ値は乗算されていない. つまり、カラーの透明度そのままの値
+		  DXGI_ALPHA_MODE_IGNORE,			//アルファ値は無視
+		  DXGI_ALPHA_MODE_FORCE_DWORD		//この列挙体を強制的に32ビットサイズにコンパイル(通常使わないと思われる)
+		} ;
+	  UINT             Flags;		//DXGI_SWAP_CHAIN_FLAGの値をOR演算子で組み合わせたものが入る. スワップチェーンの動作オプションを指定したものが入る
+	} DXGI_SWAP_CHAIN_DESC1;
+	*/
+	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
+	swapChainDesc.Width = window_width;
+	swapChainDesc.Height = window_height;
+	swapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;		//RGBAに8byteずつ使用する(256bit)
+	swapChainDesc.Stereo = false;
+	swapChainDesc.SampleDesc.Count = 1;
+	swapChainDesc.SampleDesc.Quality = 0;
+	swapChainDesc.BufferUsage = DXGI_USAGE_BACK_BUFFER;
+	swapChainDesc.BufferCount = 2;
+
+	//フレームバッファはウィンドウのサイズに引き伸ばす
+	swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
+
+	//フレーム表示後はバッファーの中身を破棄
+	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+
+	//アルファ値はGPUにおまかせ
+	swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+
+	//ウィンドウ <-> フルスクリーンモード で切替可能に設定
+	swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+
+	//スワップチェーンの生成
+	result = _dxgiFactory->CreateSwapChainForHwnd(
+		_commandQueue,		//コマンドキューオブジェクト
+		hwnd,				//ウィンドウハンドル
+		&swapChainDesc,		//スワップチェーン設定
+		nullptr,			//DXGI_SWAP_CHAIN_FULLSCREEN_DESC(スワップチェーンのフルスクリーン)構造体のポインタ(指定しない場合はnullptr)
+		nullptr,			//IDXGIOutputインタフェースのポインタ(マルチモニターを使用する場合は、出力先のモニター指定のために使用する. 使用しないならnullptr)
+		(IDXGISwapChain1**)&_swapchain		//スワップチェーン作成成功時にこの変数にインターフェースのポインタが格納される
+	);
 
 	//ウィンドウの表示
 	ShowWindow(hwnd, SW_SHOW);
