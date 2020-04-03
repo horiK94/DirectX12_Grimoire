@@ -376,6 +376,114 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		nullptr,			//IDXGIOutputインタフェースのポインタ(マルチモニターを使用する場合は、出力先のモニター指定のために使用する. 使用しないならnullptr)
 		(IDXGISwapChain1**)&_swapchain		//スワップチェーン作成成功時にこの変数にインターフェースのポインタが格納される
 	);
+	
+	//スワップチェーンを作成したが、スワップチェーンのバックバッファーをクリアしたり、書き込んだりはこのままではできない
+	/*レンダータッゲットビューというビューが必要
+		↓
+	  レンダーターゲットビュー(ビューつまりディスクリプタのこと)を入れるディスクリプタヒープが必要
+	*/
+
+
+	/////////////////////////////
+	// ディスクリプタヒープの作成(ビューはディスクリプタヒープがないと作れないため)
+	/////////////////////////////
+
+	//ディスクリプタヒープはディスクリプタを複数入れるためのヒープ領域
+	
+	//ヒープを作成するための設定
+	/*
+	typedef struct D3D12_DESCRIPTOR_HEAP_DESC {
+	  D3D12_DESCRIPTOR_HEAP_TYPE  Type;		//なんのビューを作るか
+		typedef enum D3D12_DESCRIPTOR_HEAP_TYPE {
+		  D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,		// CBV(定数バッファ), SBV(テクスチャバッファー), UAV(コンピュートシェーダ)
+		  D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,			// サンプラー
+		  D3D12_DESCRIPTOR_HEAP_TYPE_RTV,				// RTV(レンダータッゲットビュー)
+		  D3D12_DESCRIPTOR_HEAP_TYPE_DSV,				// DSV(深度ステンシルビュー)
+		  D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES			// 記述子ヒープのタイプの数(?)
+		} ;
+	  UINT                        NumDescriptors;	//格納できるディスクリプタの数(デスクリプタヒープが配列の為、配列数の指定が必要)
+	  D3D12_DESCRIPTOR_HEAP_FLAGS Flags;		//ディスクリプタのビューの情報をシェーダー側が参照する必要があるか
+	  //SRV(テクスチャバッファー)やCBV(定数バッファー)ならD3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLEだが、今回は教える必要はないのでD3D12_DESCRIPTOR_HEAP_FLAG_NONE
+	  UINT                        NodeMask;		//複数のGPUを使用する場合、どのGPU向けのデスクリプタヒープかを指定。GPUを1つしか使用しない場合、0を設定
+	} D3D12_DESCRIPTOR_HEAP_DESC;
+	*/
+	D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+	//今回のディスクリプタはレンダーターゲットビューとして使用
+	heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	//GPUは1つしか使用しないので0
+	heapDesc.NodeMask = 0;
+	//表画面と裏画面の2つのバッファーに対するビューなので2を指定
+	heapDesc.NumDescriptors = 2;
+	//シェーダー側からディスクリプタのビューの情報を参照しないのでD3D12_DESCRIPTOR_HEAP_FLAG_NONEを指定
+	heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
+	ID3D12DescriptorHeap* rtvHeap = nullptr;
+
+	/*
+	CreateDescriptorHeap関数
+		第1引数：D3D12_DESCRIPTOR_HEAP_DESC構造体へのポインタ
+		第2引数：各インタフェースの固有GUID
+		第3引数：ID3D12DescriptorHeapインタフェースのポインタを格納する変数のアドレス
+
+		GUIDやインタフェースを格納した変数のアドレスに関しては、IID_PPV_ARGSマクロを使用することが可能
+	*/
+
+	result = _dev->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&rtvHeap));
+
+	/////////////////////////////
+	// ディスクリプタヒープ内のディスクリプタとバックバッファーの関連付け
+	/////////////////////////////
+
+	//スワップチェーンのバックバッファーの数を取得したいために、スワップチェーンの説明を取得する
+	//(なお、これはディスクリプタヒープの配列数とバックバッファーの数を知りたいためにやっているので、ディスクリプタヒープの配列数から算出しても良い)
+	DXGI_SWAP_CHAIN_DESC swapChaDesc = {};
+	result = _swapchain->GetDesc(&swapChaDesc);			//この関数使うよりはIDXGISwapChain1::GetSwap1()を使ってねとのこと
+	
+	//ID3D12Resource: CPUとGPUの物理メモリまたはヒープへの読み書きの一般化されたできることをカプセル化したもの. 
+	//GPUメモリにある、様々なデータを管理するための汎用クラス
+	//配列、テクスチャ、モデルといったデータは、全てID3D12Resouceインターフェイスを通して管理
+	//この変数にはスワップチェーンのバックバッファーのメモリを入れていく
+	vector<ID3D12Resource*> _backBuffers(swapChaDesc.BufferCount);		//vector<T> t(n);		でT型の変数tを配列要素nで確保ということになる
+	for (int idx = 0; idx < swapChaDesc.BufferCount; idx++)
+	{
+		//スワップチェーン内のバッファーとビューの関連付け
+
+		//スワップチェーン内のバックバッファーのメモリの取得
+		result = _swapchain->GetBuffer(idx, IID_PPV_ARGS(&_backBuffers[idx]));
+
+		//(スワップチェーン内の)バックバッファーとビュー(ディスクリプタ)の関連付け
+		//デスクリプタヒープ上にRTV用のデスクリプタを作成する関数
+		/*
+		void CreateRenderTargetView(
+		  ID3D12Resource                      *pResource,		//(RTVの)レンダーターゲット(描画先)を表すポインター
+		  const D3D12_RENDER_TARGET_VIEW_DESC *pDesc,			//作成するビューの設定内容
+		  //nullptrに設定するとミップマップの0番のサブリソースにアクセスできるらしいが、RTVはミップマップ関係ないのでnullptr
+		  D3D12_CPU_DESCRIPTOR_HANDLE         DestDescriptor	//ディスクリプタヒープにおけるビューのアドレスが入る
+		  //D3D12_CPU_DESCRIPTOR_HANDLE: ディスクリプタヒープにおけるアドレスのようなもの
+		  typedef struct D3D12_CPU_DESCRIPTOR_HANDLE {
+			  SIZE_T ptr;		//ここにアドレスが入ってくる
+		  } D3D12_CPU_DESCRIPTOR_HANDLE;
+		);
+		*/
+		//ディスクリプタヒープの先頭のアドレスを受け取る
+		D3D12_CPU_DESCRIPTOR_HANDLE handle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+
+		//ID3D12Device::GetDescriptorHandleIncrementSize(): ディスクリプタ1つ1つのサイズを返す
+		//引数にはディスクリプタの種類(D3D12_DESCRIPTOR_HEAP_TYPE)を指定(レンダーターゲットビューはD3D12_DESCRIPTOR_HEAP_TYPE_RTV)
+		handle.ptr += idx * _dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+		_dev->CreateRenderTargetView(
+			_backBuffers[idx],
+			nullptr,
+			//ディスクリプタヒープハンドルを取得するには ID3D12DescriptaHeap::GetCPUDescriptorHandleForHeapStart()
+			//ID3D12DescriptaHeap::GetCPUDescriptorHandleForHeapStart()はディスクリプタヒープの「先頭の」アドレスしか取得できない
+			//1. ビューの種類によってディスクリプタが必要とするサイズが異なる(ずらすバイトが異なる)
+			//2. 受け渡し時に使用するのはハンドルであってアドレスそのものではない
+			//そのため、「ポインター + i」とできない
+			//rtvHeap->GetCPUDescriptorHandleForHeapStart()
+			handle
+		);
+	}
 
 	//ウィンドウの表示
 	ShowWindow(hwnd, SW_SHOW);
