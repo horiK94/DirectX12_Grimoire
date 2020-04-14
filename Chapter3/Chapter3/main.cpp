@@ -37,7 +37,7 @@ const unsigned int window_width = 1280;
 const unsigned int window_height = 720;
 
 //コマンドリストの参照(GPUに対する命令をまとめるためのオブジェクト)
-ID3D12CommandList* _commandList = nullptr;
+ID3D12GraphicsCommandList* _commandList = nullptr;
 //コマンドアロケーターの参照(コマンドリストを使用するのに必要)
 //コマンドリストに格納する命令の為のメモリを管理するオブジェクト
 ID3D12CommandAllocator* _commandAllocator = nullptr;
@@ -51,7 +51,7 @@ ID3D12Device* _dev = nullptr;		//デバイスオブジェクト(デバイスに�
 // IDXGIFactory6 :: EnumAdapterByGpuPreference(): 指定されたGPU設定に基づいてグラフィックアダプターを列挙します。
 // という関数を実装する
 IDXGIFactory6* _dxgiFactory = nullptr;
-IDXGISwapChain* _swapchain = nullptr;
+IDXGISwapChain4* _swapchain = nullptr;
 
 //ウィンドウアプリケーションはマウス操作やキーボードなどプレイヤーの発生させたイベントを契機にして、次の処理を行う(イベント駆動型プログラミング)
 //イベント駆動型プログラミングではイベントを処理する関数が用意される(イベントハンドラ)
@@ -77,6 +77,18 @@ LRESULT WindowProcedure(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 	}
 	//規定の処理を行う(興味のないメッセージの処理は，既定のウィンドウプロシージャである DefWindowProc に丸投げ)
 	return DefWindowProc(hwnd, msg, wparam, lparam);
+}
+
+///デバッグレイヤーを有効化
+void EnableDebugLayer()
+{
+	//ID3D12Debug: デバッグ設定をしたり、パイプラインステートの検証を行うためのインタフェース
+	ID3D12Debug* debugLayer = nullptr;
+	//D3D12GetDebugInterface: デバックインターフェースを取得
+	auto result = D3D12GetDebugInterface(IID_PPV_ARGS(&debugLayer));
+	//EnableDebugLayer(): デバッグレイヤーの有効
+	debugLayer->EnableDebugLayer();		//デバッグレイヤーの有効化
+	debugLayer->Release();		//有効化したので、インターフェースを破棄
 }
 
 #if _DEBUG		//デバッグモード(最初の方はコマンドライン出力で情報表示するため)
@@ -147,6 +159,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		nullptr			//追加パラメータ
 	);
 
+#ifdef _DEBUG
+	//デバッグレイヤー有効化
+	EnableDebugLayer();
+#endif // DEBUG
+
+
 	/////////////////////////////
 	// DX12周りの初期化
 	/////////////////////////////
@@ -173,12 +191,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 	  void   **ppFactory
 	);
 	Flags: UINT: 0かDXGI_CREATE_FACTORY_DEBUGが入る
-	DXGI_CREATE_FACTORY_DEBUG .. DirectX12ではCreateDXGIFactory2()を使うとき、DXGI_CREATE_FACTORY_DEBUGフラグを使用しないとならない(らしい)
+	DXGI_CREATE_FACTORY_DEBUG .. DirectX12ではデバッグモードでCreateDXGIFactory2()を使うとき、DXGI_CREATE_FACTORY_DEBUGフラグを使用しないとならない(らしい)
+	EnableDebugLayer()ではDXGIのエラーメッセージを取得できない. DXGIのエラーメッセージが欲しい場合は、FlagsにDXGI_CREATE_FACTORY_DEBUGを指定
 	riid, ppFactory: 戻り値はIID_PPV_ARGSを使用
 	返り値に使用しているドライバーやハードの情報の入った変数_dxgiFactoryが返ってくる
 	*/
+	//デバッグモードでDXGIオブジェクトを取得しに行く
 	if (FAILED(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&_dxgiFactory))))
 	{
+		//だめだったので、通常のモードででDXGIオブジェクトを取得しに行く
 		//DXGI_CREATE_FACTORY_DEBUGフラグでだめだったときよう.ただ、DirectX12でフラグを0にするのは推奨されていない気がする
 		if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&_dxgiFactory))))
 		{
@@ -376,7 +397,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		nullptr,			//IDXGIOutputインタフェースのポインタ(マルチモニターを使用する場合は、出力先のモニター指定のために使用する. 使用しないならnullptr)
 		(IDXGISwapChain1**)&_swapchain		//スワップチェーン作成成功時にこの変数にインターフェースのポインタが格納される
 	);
-	
+
 	//スワップチェーンを作成したが、スワップチェーンのバックバッファーをクリアしたり、書き込んだりはこのままではできない
 	/*レンダータッゲットビューというビューが必要
 		↓
@@ -389,7 +410,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 	/////////////////////////////
 
 	//ディスクリプタヒープはディスクリプタを複数入れるためのヒープ領域
-	
+
 	//ヒープを作成するための設定
 	/*
 	typedef struct D3D12_DESCRIPTOR_HEAP_DESC {
@@ -438,12 +459,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 	//(なお、これはディスクリプタヒープの配列数とバックバッファーの数を知りたいためにやっているので、ディスクリプタヒープの配列数から算出しても良い)
 	DXGI_SWAP_CHAIN_DESC swapChaDesc = {};
 	result = _swapchain->GetDesc(&swapChaDesc);			//この関数使うよりはIDXGISwapChain1::GetSwap1()を使ってねとのこと
-	
+
 	//ID3D12Resource: CPUとGPUの物理メモリまたはヒープへの読み書きの一般化されたできることをカプセル化したもの. 
 	//GPUメモリにある、様々なデータを管理するための汎用クラス
 	//配列、テクスチャ、モデルといったデータは、全てID3D12Resouceインターフェイスを通して管理
 	//この変数にはスワップチェーンのバックバッファーのメモリを入れていく
 	vector<ID3D12Resource*> _backBuffers(swapChaDesc.BufferCount);		//vector<T> t(n);		でT型の変数tを配列要素nで確保ということになる
+
+	//ディスクリプタヒープの先頭のアドレスを受け取る
+	D3D12_CPU_DESCRIPTOR_HANDLE handle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+
 	for (int idx = 0; idx < swapChaDesc.BufferCount; idx++)
 	{
 		//スワップチェーン内のバッファーとビューの関連付け
@@ -465,25 +490,48 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		  } D3D12_CPU_DESCRIPTOR_HANDLE;
 		);
 		*/
-		//ディスクリプタヒープの先頭のアドレスを受け取る
-		D3D12_CPU_DESCRIPTOR_HANDLE handle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-
-		//ID3D12Device::GetDescriptorHandleIncrementSize(): ディスクリプタ1つ1つのサイズを返す
-		//引数にはディスクリプタの種類(D3D12_DESCRIPTOR_HEAP_TYPE)を指定(レンダーターゲットビューはD3D12_DESCRIPTOR_HEAP_TYPE_RTV)
-		handle.ptr += idx * _dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
 		_dev->CreateRenderTargetView(
 			_backBuffers[idx],
 			nullptr,
 			//ディスクリプタヒープハンドルを取得するには ID3D12DescriptaHeap::GetCPUDescriptorHandleForHeapStart()
-			//ID3D12DescriptaHeap::GetCPUDescriptorHandleForHeapStart()はディスクリプタヒープの「先頭の」アドレスしか取得できない
+			//何故か? ID3D12DescriptaHeap::GetCPUDescriptorHandleForHeapStart()はディスクリプタヒープの「先頭の」アドレスしか取得できない
 			//1. ビューの種類によってディスクリプタが必要とするサイズが異なる(ずらすバイトが異なる)
 			//2. 受け渡し時に使用するのはハンドルであってアドレスそのものではない
-			//そのため、「ポインター + i」とできない
-			//rtvHeap->GetCPUDescriptorHandleForHeapStart()
+			//そのため、「ポインター + i」とできないので、
+			//rtvHeap->GetCPUDescriptorHandleForHeapStart()を使用する
 			handle
 		);
+
+		//ID3D12Device::GetDescriptorHandleIncrementSize(): ディスクリプタ1つ1つのサイズを返す
+		//引数にはディスクリプタの種類(D3D12_DESCRIPTOR_HEAP_TYPE)を指定(レンダーターゲットビューはD3D12_DESCRIPTOR_HEAP_TYPE_RTV)
+		handle.ptr += _dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	}
+
+	/////////////////////////////
+	// フェンスの作成(GPUの処理が終わったかを監視するもの)
+	/////////////////////////////
+	/*
+	HRESULT CreateFence(
+	  UINT64            InitialValue,		//フェンスのための初期化値
+	  D3D12_FENCE_FLAGS Flags,		//フェンスのオプション
+		  typedef enum D3D12_FENCE_FLAGS {
+			  D3D12_FENCE_FLAG_NONE,				//オプションなし
+			  D3D12_FENCE_FLAG_SHARED,				//フェンスは共有されている状態
+			  D3D12_FENCE_FLAG_SHARED_CROSS_ADAPTER,	//フェンスはもう1つのGPUアダプターと共有される
+			  D3D12_FENCE_FLAG_NON_MONITORED		//非監視タイプ
+			} ;
+	  REFIID            riid,		//フェンスインターフェース（ID3D12Fence）のグローバル一意識別子（GUID）
+	  void              **ppFence		//作成されたフェンスインスタンスのポインター
+	);
+	*/
+	//フェンスのインスタンス
+	ID3D12Fence* _fence = nullptr;
+	//フェンス初期化値
+	UINT64 _fenceVal = 0;
+	//フェンスの作成(これで、GPUの命令がすべて完了したかが知れる)
+	result = _dev->CreateFence(_fenceVal,
+		D3D12_FENCE_FLAG_NONE,
+		IID_PPV_ARGS(&_fence));
 
 	//ウィンドウの表示
 	ShowWindow(hwnd, SW_SHOW);
@@ -504,6 +552,226 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		{
 			break;
 		}
+
+		/////////////////////////////
+		// これより下がDirectX12の処理
+		/////////////////////////////
+
+		/////////////////////////////
+		// スワップチェーンの動作
+		/////////////////////////////
+
+		/////////////////////////////
+		// 1. コマンドアロケーターのリセット
+		/////////////////////////////
+
+		result = _commandAllocator->Reset();
+		//このあとここに、命令オブジェクトを貯めていく
+
+		/////////////////////////////
+		// 2.レンダーターゲットの設定(バックバファーを設定する)
+		/////////////////////////////
+
+		//現在のバックバッファーのindex取得(このためにはIDXGISwapChain3以上でswapChainを代入する必要がある)
+		//今回はIDXGISwapChain4でスワップチェーンを保存している
+		auto backBufferIndex = _swapchain->GetCurrentBackBufferIndex();
+		//現在のバックバッファーのindexを保存したので、この値は次のフレームで描画されることになる
+
+		// レンダーターゲットの指定
+
+		//index0のバックバッファーのポインターを取得
+		D3D12_CPU_DESCRIPTOR_HANDLE renderTargetViewHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+		//レンダーターゲットビューとして指定したいバックバッファーのポインタを設定
+		renderTargetViewHandle.ptr += backBufferIndex * _dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+		/*
+		これから使用するレンダーターゲットビューの設定
+		void OMSetRenderTargets(
+		  UINT                              NumRenderTargetDescriptors,		//pRenderTargetDescriptors配列内のエントリの数 => レンダーターゲット数
+		  const D3D12_CPU_DESCRIPTOR_HANDLE *pRenderTargetDescriptors,		//レンダーターゲットハンドル
+		  BOOL                              RTsSingleHandleToDescriptorRange,
+		  trueなら 渡されたハンドルがNumRenderTargetDescriptors 記述子の連続した範囲へのポインターであることを意味
+		  falseなら ハンドルがNumRenderTargetDescriptorsハンドルの配列の最初であることを意味
+		  const D3D12_CPU_DESCRIPTOR_HANDLE *pDepthStencilDescriptor		//深度ステンシルバッファビューのハンドル(今回は使用しないのでnullptr)
+		);
+		*/
+		//コマンドリストが呼んでいる関数-> コマンドリストを貯めている
+		_commandList->OMSetRenderTargets(1,
+			&renderTargetViewHandle,
+			true,		//2つのレンダーターゲットビューは配列のように並んでいるためtrueにする
+			nullptr);
+
+
+		/////////////////////////////
+		// 3.レンダーターゲットを指定色でクリア
+		/////////////////////////////
+
+		//レンダーターゲットを特定の色でクリア
+		float clearColor[] = { 1.0f, 1.0f, 0.0f, 1.0f };		//黄色
+		/*
+		レンダーターゲットのすべての要素を1つの値に設定
+		void ClearRenderTargetView(
+		  D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView,		//クリアするレンダーターゲットハンドル
+		  const FLOAT [4]             ColorRGBA,			//レンダーターゲットを塗りつぶす色RGBA配列
+		  UINT                        NumRects,				//pReactsが指定する配列内の長方形の数
+		  const D3D12_RECT            *pRects				//クリアする矩形(D3D12_RECT 構造体)の配列. nullptrを指定した場合(設定したバックバッファの)リソースビュー全体
+		);
+		*/
+		//コマンドリストに貯めていく
+		_commandList->ClearRenderTargetView(renderTargetViewHandle, clearColor, 0, nullptr);
+
+		/////////////////////////////
+		// 4. 貯めておいた命令の実行
+		/////////////////////////////
+
+		// 注意; 実行前にコマンドリストはクローズしなければならない
+
+		//コマンドのクローズ
+		_commandList->Close();
+
+		//コマンドの実行
+		/*
+		実行するコマンドリストの配列を送信
+		void ID3D12CommandQueue::ExecuteCommandLists(
+		  UINT              NumCommandLists,		実行するコマンドリストの数(ppCommandListsの数)
+		  ID3D12CommandList * const *ppCommandLists	コマンドリスト配列の先頭(配列のアドレス)
+		);
+		*/
+		ID3D12CommandList* commandList[] = { _commandList };		//ID3D12GraphicsCommandListはID3D12CommandListインターフェースを継承している
+		//コマンドキューでコマンドの実行(コマンド配列の送信)
+		_commandQueue->ExecuteCommandLists(
+			1,
+			commandList
+		);
+
+		//フェンスは内部にカウンタを持っており、GetCompletedValue()で取得できる
+		//Signal()で設定ができる
+
+		//コマンド実行後、GPUが命令をすべて完了するまで待つ
+		/*
+		フェンスのフェンス値を指定した値に設定
+		HRESULT Signal(
+		  ID3D12Fence *pFence,		//フェンスのポインター
+		  UINT64      Value			//GPU処理完了後になってほしい値(フェンス値)
+		);
+		*/
+		//ID3D12CommandQueue::Signal()を呼ぶと、
+		//以前にサブミット(つまり現在のループ中に入れられた)されたコマンドがGPU上での実行を完了している、あるいは完了し終わったとき、自動的に第1引数で指定したFenceの値を第2引数の値に更新します
+		//ドキュメントではfencenのこの値を" fence value "と呼び、原則 前の値より1大きい値を指定する
+		_commandQueue->Signal(_fence, ++_fenceVal);
+
+		// フェンス値の更新をCPUが検出するには、2つの方法がある
+		//1. ビジーループを回す方法(ダサい)
+		//2. イベントオブジェクトを使用する方法
+		/*
+		ID3D12Fence::SetEventOnCompletion()
+		fence valueが第1引数の値になったとき、第2引数のイベントオブジェクトをシグナル状態に遷移させる
+		あとは、WaitForSingleObject()でスレッドを寝かせれば、GPUの実行完了後に叩き起こしてくれる
+		*/
+
+
+		//ID3D12Fence :: GetCompletedValue(): フェンスの現在の値を取得する
+		//while (_fence->GetCompletedValue() != _fenceVal)		//フェンスの現在の値が設定したフェンス値になっている = GPUに投げたすべての命令を処理した
+		//{
+		//	//ビジーループ
+		//	;
+		//}
+
+		//ビジーループを使用しない方法
+		//WindowのイベントとWaitForSingleObject()を用いる方法がある
+
+		//すでにGPUの処理を終えていたらイベントの設定はしないでよいので、チェックする
+		if (_fence->GetCompletedValue() != _fenceVal)
+		{
+			//イベントオブジェクトは2つの状態しか表現せず、スイッチのようなもの
+			//イベントオブジェクトスイッチがONになると、「シグナル状態」となり、 イベントオブジェクトスイッチがOFFになると、「非シグナル状態」
+
+			//今回はGPUの命令を待つために以下の事を行う
+			/*
+			1. イベントオブジェクトを設定(これにより、スレッド処理が可能)
+			2. イベントオブジェクトはフェンスが特定の値になったらシグナル状態になるよう設定
+			3. シグナル状態になるまでスレッドを待機
+			4. イベントオブジェクトをとじる
+			*/
+
+
+			//イベントハンドルの取得
+			auto event = CreateEvent(
+				nullptr,		//セキュリティ記述子 (NULLを指定するとデフォルト値が入る)
+				false,			// TRUEなら手動リセットオブジェクトが、FALSEなら自動リセットオブジェクトが作成される。
+				//手動リセットオブジェクトはResetEvent関数をCALLしてイベントオブジェクトを非シグナル状態にするもので、自動リセットオブジェクトはWaitForSingleObject関数をCALLした後自動的に非シグナル状態になる。
+				//シグナル状態 .. イベントが使用可能状態, 非シグナル .. イベントが使用不可能状態
+				false,			//シグナルの初期状態を記述. TRUEならシグナル状態, falseなら非シグナル状態 
+				nullptr			//イベントオブジェクトの名前
+				);
+
+			//イベントオブジェクトの状態を変更する2つのAPI関数があり、SetEvent関数とResetEvent関数
+			//SetEvent関数はイベントオブジェクトをシグナル状態にセットし、ResetEvent関数はその逆である。
+
+			/*
+			ID3D12Fence :: SetEventOnCompletion(): フェンスが特定の値に達したときに発生するイベントを指定します。
+			HRESULT SetEventOnCompletion(
+			  UINT64 Value,		// イベントが通知される時のフェンスの値
+			  HANDLE hEvent		// イベントが通知=シグナル状態に遷移されるイベントオブジェクト
+			);
+			*/
+			_fence->SetEventOnCompletion(
+				_fenceVal,
+				event
+			);
+
+			//指定されたイベントオブジェクトがシグナル状態になるか、指定された時間が経過するまでスレッドを待機
+			WaitForSingleObject(event,//同期オブジェクトのハンドル
+				INFINITY		//イベントオブジェクトの状態がシグナル状態になるまでの待機する時間.指定した時間内にシグナル状態にならなければ、WaitForSingleObject関数は呼び出し元に制御を返す
+			);
+
+			//イベントハンドルを閉じる
+			CloseHandle(event);
+		}
+
+		/*
+		フェンスについて
+		Fenceは、Command QueueにサブミットしたCommand Listの完了を検知するために使用
+
+		_commandAllocator->Reset();
+		はバインドされたCommand ListがGPUで実行を終えるまで呼び出してはならない
+		
+		というのも、
+		1. Command Allocatorに貯められた命令は
+		GPUが理解できる命令に変換される
+		2. グラフィックスメモリに転送
+		3. GPUのプロセッサがコマンドを消化していく
+		ということが、コマンドをGPUに送った際に行われるが、
+		_commandAllocator->Reset();
+		をすると グラフィックスメモリの先頭領域まで巻き戻し、
+		新たな命令によって上書きされてしまうため動作が保証できなくなる。
+
+		そのため、コマンドアロケーターをリセットする前に、Fenceで動機を取り、
+		コマンド完了後にリセットすることが必要
+		*/
+
+		//アロケーター内のキューをクリア
+		_commandAllocator->Reset();
+		//コマンドリストにまた貯められるよう準備(クローズ解除とか)
+		_commandList->Reset(_commandAllocator, nullptr);
+
+
+		/////////////////////////////
+		// 5. 画面のスワップ
+		/////////////////////////////
+		//画面のスワップ(フリップ)を行う
+		_swapchain->Present(1, 0);
+		/*
+		レンダリングされた画像をユーザーに提示する
+		HRESULT Present(
+			// フレームの表示（スワップ）までの待ちフレーム数(待つべき垂直同期の数)を指定
+			//バックバッファーが2以上の時、0にするとPreset()即実行し、次のフレームが始まる
+			//1にすると、1回垂直同期(VSYNC)を待ってから、スワップする
+			//なお、フルスクリーンか、ウィンドウモードかによっても処理が変わる
+			UINT SyncInterval,
+			// スワップチェーン表示オプション
+			UINT Flags
+		);
+		*/
 	}
 
 	//このクラスは使わないので登録解除
