@@ -565,7 +565,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		// 1. コマンドアロケーターのリセット
 		/////////////////////////////
 
-		result = _commandAllocator->Reset();
+		//result = _commandAllocator->Reset();
+		//ここにReset()するコードが有ると、「アロケーターはコマンドリストが記録されているためリセットすることが出来ない」と表示されてしまうので消しておく
+
 		//このあとここに、命令オブジェクトを貯めていく
 
 		/////////////////////////////
@@ -576,6 +578,54 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		//今回はIDXGISwapChain4でスワップチェーンを保存している
 		auto backBufferIndex = _swapchain->GetCurrentBackBufferIndex();
 		//現在のバックバッファーのindexを保存したので、この値は次のフレームで描画されることになる
+
+		/////////////////////////////
+		// バリアの設定
+		/////////////////////////////
+
+		//typedef struct D3D12_RESOURCE_BARRIER {
+		//	D3D12_RESOURCE_BARRIER_TYPE  Type;		//リソースバリアの種類
+			//typedef enum D3D12_RESOURCE_BARRIER_TYPE {
+			//	D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,		//遷移バリア (ソースの状態遷移が可能になるまでバリアを設置するということになる)
+				// 状態遷移は描画前であれば Preset状態からRenderTarget状態へ移行できるようになったら、描画後ははその逆
+			//	D3D12_RESOURCE_BARRIER_TYPE_ALIASING,		//エイリアスバリア
+			//	D3D12_RESOURCE_BARRIER_TYPE_UAV				//アクセスビュー（UAV）バリア
+			//};
+		//	D3D12_RESOURCE_BARRIER_FLAGS Flags;		//1つのトランジションを開始半分と終了半分に分割したい場合などに使用. を使用したときのフラグ設定（今回は不要のためD3D12_RESOURCE_BARRIER_FLAG_NONE）
+		//	union {  ※注意: 共用体で指定する
+		//		D3D12_RESOURCE_TRANSITION_BARRIER Transition;		//異なる使用法間のリソースの移行の説明構造体
+			//typedef struct D3D12_RESOURCE_TRANSITION_BARRIER {
+			//	ID3D12Resource* pResource;			// 遷移で使用するリソースのポインタ
+			//	UINT                  Subresource;	//サブリソース番号 (今回は0)(配列の番号が入る), 複数のサブリソースを持っていて、全部指定したい場合はD3D12_RESOURCE_BARRIER_ALL_SUBRESOURCESを使用する
+			//	D3D12_RESOURCE_STATES StateBefore;	//サブリソースの「前」の使用法
+			//	D3D12_RESOURCE_STATES StateAfter;	//サブリソースの「後」の使用法
+			//} D3D12_RESOURCE_TRANSITION_BARRIER;
+		//		D3D12_RESOURCE_ALIASING_BARRIER   Aliasing;		//TypeでALIASINGを指定した際に設定する
+		//		D3D12_RESOURCE_UAV_BARRIER        UAV;			//TypeでUAVを指定した際に設定する
+		//		Traisitionの設定後にAliasing, UAVの設定をしてしまうと、Transitionの設定が上書きされるので注意
+		//	};
+		//} D3D12_RESOURCE_BARRIER;
+		D3D12_RESOURCE_BARRIER BarrierDesc = {};
+		BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;		//遷移バリア
+		BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;			//分割バリアを行うわけではないのでNONE
+		BarrierDesc.Transition.pResource = _backBuffers[backBufferIndex];		//バックバッファーのリソースについて説明をすることをGPUに伝える
+		BarrierDesc.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;				//1つのバックバッファーのみバリアの指定をするので0
+
+		// PRESENT状態が終わるまでレンダーターゲットが待機。バリア実行後はレンダーターゲットとして使用中となる
+		//PRESENT = D3D12_RESOURCE_STATE_COMMONと同義
+		BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;			//直前はPRESENT状態
+		BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;		//今からレンダーターゲット状態にするよ
+
+
+		//バックバッファを「レンダーターゲットとして使用する」ことをGPUに知らせる
+		//void ResourceBarrier(
+		//	UINT                         NumBarriers,		//設定するバリア説明(D3D12_RESOURCE_BARRIER)の数
+		//	const D3D12_RESOURCE_BARRIER* pBarriers		//設定するバリア説明構造体(配列)のアドレス => 配列として複数のバリアをまとめて設定できる
+		//);
+		_commandList->ResourceBarrier(
+			1,		//バックバッファー1つだけなので1を指定
+			&BarrierDesc
+			);
 
 		// レンダーターゲットの指定
 
@@ -597,7 +647,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		//コマンドリストが呼んでいる関数-> コマンドリストを貯めている
 		_commandList->OMSetRenderTargets(1,
 			&renderTargetViewHandle,
-			true,		//2つのレンダーターゲットビューは配列のように並んでいるためtrueにする
+			false,		//2つのレンダーターゲットビューは配列のように並んでいるためtrueにする
 			nullptr);
 
 
@@ -618,6 +668,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		*/
 		//コマンドリストに貯めていく
 		_commandList->ClearRenderTargetView(renderTargetViewHandle, clearColor, 0, nullptr);
+
+		BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;			//直前はPRESENT状態
+		BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;		//今からレンダーターゲット状態にするよ
+
+
+		//バックバッファを「レンダーターゲットとして使用する」ことをGPUに知らせる
+		//void ResourceBarrier(
+		//	UINT                         NumBarriers,		//設定するバリア説明(D3D12_RESOURCE_BARRIER)の数
+		//	const D3D12_RESOURCE_BARRIER* pBarriers		//設定するバリア説明構造体(配列)のアドレス => 配列として複数のバリアをまとめて設定できる
+		//);
+		_commandList->ResourceBarrier(
+			1,		//バックバッファー1つだけなので1を指定
+			&BarrierDesc
+		);
 
 		/////////////////////////////
 		// 4. 貯めておいた命令の実行
@@ -683,8 +747,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		if (_fence->GetCompletedValue() != _fenceVal)
 		{
 			//イベントオブジェクトは2つの状態しか表現せず、スイッチのようなもの
-			//イベントオブジェクトスイッチがONになると、「シグナル状態」となり、 イベントオブジェクトスイッチがOFFになると、「非シグナル状態」
-
+			//イベントオブジェクトスイッチがONになると、「シグナル状態」となり、 OFFになると「非シグナル状態」となる
 			//今回はGPUの命令を待つために以下の事を行う
 			/*
 			1. イベントオブジェクトを設定(これにより、スレッド処理が可能)
