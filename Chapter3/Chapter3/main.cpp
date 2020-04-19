@@ -784,7 +784,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 
 			//指定されたイベントオブジェクトがシグナル状態になるか、指定された時間が経過するまでスレッドを待機
 			WaitForSingleObject(event,//同期オブジェクトのハンドル
-				INFINITY		//イベントオブジェクトの状態がシグナル状態になるまでの待機する時間.指定した時間内にシグナル状態にならなければ、WaitForSingleObject関数は呼び出し元に制御を返す
+				INFINITE		//イベントオブジェクトの状態がシグナル状態になるまでの待機する時間.指定した時間内にシグナル状態にならなければ、WaitForSingleObject関数は呼び出し元に制御を返す
 			);
 
 			//イベントハンドルを閉じる
