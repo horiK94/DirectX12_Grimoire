@@ -464,6 +464,38 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 		IID_PPV_ARGS(&vertBuff)
 	);
 
+	//GPUに頂点バッファーを用意できたので、頂点情報をGPUにコピーする
+
+	//バッファーの仮想アドレスの取得
+	//HRESULT ID3D12Resource::Map(
+	//	UINT              Subresource,			//サブリソースのインデックス番号を指定(リソースが配列になっていたり、mipmapでないので0)
+	//	const D3D12_RANGE* pReadRange,			//アクセスする(Mapしたい)メモリの範囲の指定(nullptrは全範囲. リソース全体を指定する)
+	//	void** ppData		//受け取るためのポインター変数アドレス
+	//);
+	//XMFLOAT3とは? 3D座標の構造体みたいなやつ(DirectXMathが定義してくれているやつ). 今回は配列なので、そのアドレスを型としている
+	XMFLOAT3* vertMap = nullptr;
+	//vertMapはXMFLOAT3*, &vertMapはXMFLOAT3*だが、Mapの第3引数はvoid**を期待しているので、型変換している
+	vertBuff->Map(0, nullptr, (void**)&vertMap);
+
+	//GPUの仮想アドレスを得られたので、頂点情報をそのアドレスにコピー
+	copy(begin(vertices), end(vertices), vertMap);
+
+	//仮想アドレス取得の破棄
+	vertBuff->Unmap(0, nullptr);
+
+	//頂点情報を利用するには頂点バッファービューが必要
+	//GPUに何バイトのデータが存在するのか? 1頂点あたり何バイトか？といった情報をしらせるため
+	//typedef struct D3D12_VERTEX_BUFFER_VIEW {
+	//	D3D12_GPU_VIRTUAL_ADDRESS BufferLocation;		//頂点バッファーアドレス
+	//	UINT                      SizeInBytes;			//総バイト数
+	//	UINT                      StrideInBytes;		//1頂点あたりのバイト数
+	//} D3D12_VERTEX_BUFFER_VIEW;
+
+	D3D12_VERTEX_BUFFER_VIEW vertexBufferView = {};
+	vertexBufferView.BufferLocation = vertBuff->GetGPUVirtualAddress();		//GPUのバッファーの仮想アドレスの取得
+	vertexBufferView.SizeInBytes = sizeof(vertices);
+	vertexBufferView.StrideInBytes = sizeof(vertices[0]);
+
 	//すぐに終了しないようゲームループの作成
 	MSG msg = {};
 
