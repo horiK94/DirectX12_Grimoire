@@ -4,9 +4,13 @@
 #include <dxgi1_6.h>		//DXGI(Direct3D APIよりもドライバーに近いディスプレイ出力に直接関係する機能を制御するためのAPIセット)
 #include <vector>
 #include <DirectXMath.h>
+// d3d12.hにシェーダーのコンパイル機能がないので追加
+#include <d3dcompiler.h>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
+//.libファイルのリンク設定
+#pragma comment(lib, "d3dcompiler.lib")
 
 #ifdef  _DEBUG
 #include <iostream>
@@ -495,6 +499,98 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)		//非デバッグモード
 	vertexBufferView.BufferLocation = vertBuff->GetGPUVirtualAddress();		//GPUのバッファーの仮想アドレスの取得
 	vertexBufferView.SizeInBytes = sizeof(vertices);
 	vertexBufferView.StrideInBytes = sizeof(vertices[0]);
+
+	//シェーダーの読み込み -> シェーダーオブジェクトにする
+	//読み込んだデーターを保存するID3DBlob型だが、シェーダー以外にもなにかデータの塊を示すポインターとしても使用される
+	ID3DBlob* vertexShaderBlob = nullptr;
+	ID3DBlob* pixelShaderBlob = nullptr;
+
+	ID3DBlob* errorBlob = nullptr;
+	// HLSLコードのコンパイルを行う
+	//HRESULT D3DCompileFromFile(
+	//	LPCWSTR                pFileName,		//シェーダーコードを含むファイルの名前を含む、定数のnullで終了する文字列へのポインター(ワイド文字列)
+	//	const D3D_SHADER_MACRO* pDefines,		//シェーダーマクロの定義. 使用しない場合はnullptr
+	//シェーダーマクロとは、設定したシンボルに値を入れてコンパイルしてくれるもの. 
+	/*
+	D3D_SHADER_MACRO  deflist[]= {
+	{  "SF_ANIMATION",  "1", },
+	{  NULL, NULL },
+	};
+	とすれば、hlsl側で
+	#if SF_ANIMATION
+	  ～
+	#endif
+	といった機能指定が行えるようになる
+	*/
+	//	ID3DInclude* pInclude,		//インクルードオブジェクト
+	// #include文が書いてある時のインクルードファイルのディレクトリを指定する. 現在のディレクトリ(カレントディレクトリ)を指定する場合は D3D_COMPILE_STANDARD_FILE_INCLUDE マクロを渡す
+	//	LPCSTR                 pEntrypoint,		//エントリポイント どの関数から始めるかを指定する
+	//	LPCSTR                 pTarget,		//どのシェーダーとして割り当てるか(シェーダーの種類: 例)バーテックスシェーダー? ピクセルシェーダー?, バージョンを指定)
+	// ピクセルシェーダーなら ps_x_x
+	// バーテックスシェーダーなら vs_x_x
+	//	UINT                   Flags1,		//シェーダーコンパイルオプション
+	//	UINT                   Flags2,		//エフェクトコンパイルオプション
+	// エフェクトファイルではなくシェーダーをコンパイルすると、D3DCompileFromFileはFlags2を無視するため0が推奨されている
+	//	ID3DBlob** ppCode,		//コンパイル済みシェーダーオブジェクトのポインターアドレス
+	//	ID3DBlob** ppErrorMsgs		//エラー用ポインターのアドレス
+	//);
+	//バーテックスシェーダーのコンパイル
+	result = D3DCompileFromFile(
+		L"BasicVertexShader.hlsl",		//ファイル名のみワイド文字にするため、""の前にLをつけている
+		nullptr,
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,		//ちなみに、カレントディレクトリ以外からインクルードするならID3DIncludeを使用すること
+		"BasicVS",
+		"vs_5_0",		//バーテックスシェーダのver5.0を使用
+		D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,		//デバッグファイル/行/タイプ/シンボル情報を出力コードに挿入するようコンパイラーに指示 & コード生成中に最適化ステップをスキップするようコンパイラーに指示
+		//全オプションは次のURLを参照のこと: https://docs.microsoft.com/ja-jp/windows/win32/direct3dhlsl/d3dcompile-constants
+		0,
+		&vertexShaderBlob,
+		&errorBlob
+	);
+
+	//ピクセルシェーダーのコンパイル
+	result = D3DCompileFromFile(
+		L"BasicPixelShader.hlsl",		//ファイル名のみワイド文字にするため、""の前にLをつけている
+		nullptr,
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,		//ちなみに、カレントディレクトリ以外からインクルードするならID3DIncludeを使用すること
+		"BasicPS",
+		"ps_5_0",		//バーテックスシェーダのver5.0を使用
+		D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,		//デバッグファイル/行/タイプ/シンボル情報を出力コードに挿入するようコンパイラーに指示 & コード生成中に最適化ステップをスキップするようコンパイラーに指示
+		//全オプションは次のURLを参照のこと: https://docs.microsoft.com/ja-jp/windows/win32/direct3dhlsl/d3dcompile-constants
+		0,
+		&pixelShaderBlob,
+		&errorBlob
+	);
+
+	if (FAILED(result))		//resultがFAILEDであればtrue
+	{
+		if (result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+		{
+			//エラーメッセージがファイルが見つからないだったら
+			//::OutputDebugStringA()で引数の文字列を出力画面に出力する
+			::OutputDebugStringA("ファイルが見つかりません");
+		}
+		else
+		{
+			//エラーメッセージ
+			string errorMsg = "";		//nullptrだとsize_t 型の第１引数がnullptrになるためエラーを出す
+			errorMsg.resize(errorBlob->GetBufferSize());		//errorBlobのバッファーサイズにサイズ変更
+
+			//指定された数の要素をコピーする関数
+			//copy_n(InputIterator first,
+			//			Size n,
+			//			OutputIterator result);
+			//0 以上 n 未満であるそれぞれの i について、*(result + i) = *(first + i) を行う。
+			//resultに対して代入されていくので注意
+			//errorBlob->GetBufferPointer()はあらゆる型のデータへのポインタ（LPVOID)であり、errorMsgと互換性がないのだと思う
+			copy_n((char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize(), errorMsg.begin());
+			errorMsg += "\n";
+			::OutputDebugStringA(errorMsg.c_str());
+		}
+
+		//終了
+		exit(0);
+	}
 
 	//すぐに終了しないようゲームループの作成
 	MSG msg = {};
